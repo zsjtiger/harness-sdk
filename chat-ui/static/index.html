@@ -13,9 +13,12 @@
           <span class="brand">Strands Chat</span>
           <button class="icon-btn" id="close-sidebar" aria-label="Close sidebar">×</button>
         </div>
-        <button class="new-chat" id="new-chat">+ New chat</button>
+        <nav class="nav" aria-label="Main">
+          <button class="nav-item" id="new-chat"><span class="glyph">+</span>New chat</button>
+          <button class="nav-item" id="focus-search"><span class="glyph">⌕</span>Search</button>
+        </nav>
         <input class="search" id="search" type="search" placeholder="Search chats" aria-label="Search chats" />
-        <nav class="chat-list" id="chat-list" aria-label="Chats"></nav>
+        <div class="chat-list" id="chat-list"></div>
       </aside>
 
       <main class="main">
@@ -25,17 +28,36 @@
         </header>
 
         <section class="messages" id="messages" aria-live="polite">
-          <div class="empty" id="empty">
+          <div class="empty">
             <h2>What can I help with?</h2>
             <p>Ask a question to start a conversation. Chats are saved on this server.</p>
           </div>
         </section>
 
-        <form class="composer" id="composer">
-          <textarea id="input" rows="1" placeholder="Message Strands Chat" aria-label="Message"></textarea>
-          <button type="submit" id="send" aria-label="Send">Send</button>
-        </form>
-        <p class="status" id="status" role="status"></p>
+        <div class="composer-wrap">
+          <div class="slash-menu" id="slash-menu" role="listbox" hidden></div>
+          <div class="attachments" id="attachments"></div>
+          <form class="composer" id="composer">
+            <button type="button" class="round-btn" id="attach" aria-label="Attach a text file" title="Attach a text file">+</button>
+            <input type="file" id="file" multiple hidden />
+            <textarea id="input" rows="1" placeholder="Type / for commands" aria-label="Message"></textarea>
+            <button type="button" class="round-btn" id="mic" aria-label="Voice input" title="Voice input" hidden>🎙</button>
+            <button type="submit" class="send-btn" id="send" aria-label="Send" title="Send">↑</button>
+          </form>
+          <div class="toolbar">
+            <span class="spinner" id="spinner" role="img" aria-label="Thinking" hidden></span>
+            <span class="spacer"></span>
+            <label class="picker">
+              <span class="visually-hidden">Model</span>
+              <select id="model"></select>
+            </label>
+            <label class="picker">
+              <span class="visually-hidden">Effort</span>
+              <select id="effort"></select>
+            </label>
+          </div>
+          <p class="status" id="status" role="status"></p>
+        </div>
       </main>
     </div>
     <script src="/static/app.js"></script>

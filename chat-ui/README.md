@@ -10,12 +10,25 @@ Standard library only; no extra dependencies beyond `strands-harness`.
 
 ```bash
 cd chat-ui
-python server.py --demo        # echo replies, no model needed
-python server.py               # the harness default model (needs that model's credentials)
+python server.py --demo                              # echo replies, no model needed
+python server.py --model bedrock/... --model openai/...   # harness agents; --model adds a model to the picker
 ```
 
-Then open http://127.0.0.1:8000. Options: `--host`, `--port`, and `--data` (the JSON file that stores chats,
-default `./.agent/chat-ui/chats.json`).
+Then open http://127.0.0.1:8000. Options: `--host`, `--port`, `--data` (the JSON file that stores chats,
+default `./.agent/chat-ui/chats.json`), `--model` (repeatable), and `--demo`. The picker always offers the
+harness default model.
+
+## Features
+
+- Sidebar: new chat, search, pinned and recent groups (collapsible), pin and delete per chat.
+- Composer: "+" attaches text files (sent inline with the message, 200 KB in total), the microphone uses the
+  browser's speech recognition (shown only where it is available), Enter sends, Shift+Enter adds a line.
+- Slash commands: type `/` for `/new`, `/search`, `/pin`, `/delete`.
+- Pickers under the composer: model and reasoning effort. They apply to the open chat, or to the next chat
+  when none is open. Changing them rebuilds that chat's agent; its history is kept.
+- Not included: Projects, Artifacts, Scheduled tasks, Customize, the account menu, and Auto/Manual approval
+  mode. The harness has no matching feature for these, and its approval prompt reads from standard input,
+  which would block a web server.
 
 ## Test
 
@@ -33,10 +46,11 @@ python -m pytest tests
 
 | Method | Path | Body | Result |
 |---|---|---|---|
+| GET | `/api/config` | | the models and efforts for the pickers |
 | GET | `/api/chats` | | the chat list, pinned first |
 | POST | `/api/chats` | | a new chat |
 | GET | `/api/chats/{id}` | | a chat with its messages |
-| PATCH | `/api/chats/{id}` | `{"title"?, "pinned"?}` | the updated chat |
+| PATCH | `/api/chats/{id}` | `{"title"?, "pinned"?, "model"?, "effort"?}` | the updated chat |
 | DELETE | `/api/chats/{id}` | | `{"deleted": id}` |
 | POST | `/api/chats/{id}/messages` | `{"content"}` | the assistant reply (role `error` if the model call fails) |
 

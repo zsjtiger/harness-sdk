@@ -1,10 +1,11 @@
 """Backend for the chat UI: a JSON API over harness agents, one agent per chat.
 
-Run ``python server.py`` to answer with the harness default model (it needs that model's credentials),
-or ``python server.py --demo`` to answer with an echo agent and no model at all.
+Run ``python server.py`` to answer with harness agents (they need the credentials of the chosen model), or
+``python server.py --demo`` to answer with an echo agent and no model at all. ``--model`` (repeatable) adds
+models to the picker; the harness default model is always available.
 
 Chats and their messages live in one JSON file. Each chat's agent keeps its conversation in a harness
-session named after the chat, so the history survives a restart.
+session named after the chat, so the history survives a restart and a model change.
 """
 
 from __future__ import annotations
@@ -20,16 +21,22 @@ from collections.abc import Callable
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import get_args
 from urllib.parse import unquote, urlsplit
+
+from strands_harness.types.agent import Effort
 
 STATIC_DIR = Path(__file__).parent / "static"
 DEFAULT_DATA_FILE = Path(".agent/chat-ui/chats.json")
 DEFAULT_TITLE = "New chat"
+DEFAULT_EFFORT = "auto"
+EFFORTS = get_args(Effort)
 MAX_BODY_BYTES = 1_000_000
 MAX_TITLE_CHARS = 60
 
 Replier = Callable[[str], str]
-ReplierFactory = Callable[[str], Replier]
+# Builds the reply function for a chat from its settings: chat id, model (None for the harness default), effort.
+ReplierFactory = Callable[[str, str | None, str], Replier]
 
 
 class ApiError(Exception):
@@ -39,15 +46,15 @@ class ApiError(Exception):
         self.message = message
 
 
-def harness_replier_factory(chat_id: str) -> Replier:
+def harness_replier_factory(chat_id: str, model: str | None, effort: str) -> Replier:
     """A reply function backed by a harness agent whose session is the chat id."""
     from strands_harness import create_harness
 
-    agent = create_harness(session={"id": chat_id})
+    agent = create_harness(model=model, effort=effort, session={"id": chat_id})
     return lambda prompt: str(agent(prompt))
 
 
-def echo_replier_factory(chat_id: str) -> Replier:
+def echo_replier_factory(chat_id: str, model: str | None, effort: str) -> Replier:
     """A reply function that needs no model; used for ``--demo`` and tests."""
     return lambda prompt: f"Echo: {prompt}"
 
@@ -75,6 +82,8 @@ class ChatStore:
             "id": uuid.uuid4().hex[:12],
             "title": DEFAULT_TITLE,
             "pinned": False,
+            "model": None,
+            "effort": DEFAULT_EFFORT,
             "created_at": now,
             "updated_at": now,
             "messages": [],
@@ -84,13 +93,17 @@ class ChatStore:
             self._save()
             return _copy(chat)
 
-    def update(self, chat_id: str, title: str | None, pinned: bool | None) -> dict:
+    def update(self, chat_id: str, changes: dict) -> dict:
         with self._lock:
             chat = self._require(chat_id)
-            if title is not None:
-                chat["title"] = title.strip()[:MAX_TITLE_CHARS] or DEFAULT_TITLE
-            if pinned is not None:
-                chat["pinned"] = pinned
+            if "title" in changes:
+                chat["title"] = changes["title"].strip()[:MAX_TITLE_CHARS] or DEFAULT_TITLE
+            if "pinned" in changes:
+                chat["pinned"] = changes["pinned"]
+            if "model" in changes:
+                chat["model"] = changes["model"]
+            if "effort" in changes:
+                chat["effort"] = changes["effort"]
             self._save()
             return _copy(chat)
 
@@ -127,28 +140,56 @@ class ChatStore:
 class ChatService:
     """Chat operations plus the replies. Replies run one at a time: harness agents are not thread-safe."""
 
-    def __init__(self, store: ChatStore, replier_factory: ReplierFactory) -> None:
+    def __init__(self, store: ChatStore, replier_factory: ReplierFactory, models: list[str]) -> None:
         self.store = store
+        self.models = models
         self._replier_factory = replier_factory
-        self._repliers: dict[str, Replier] = {}
+        self._repliers: dict[str, tuple[tuple, Replier]] = {}
         self._reply_lock = threading.Lock()
+
+    def config(self) -> dict:
+        return {"models": self.models, "efforts": list(EFFORTS), "default_effort": DEFAULT_EFFORT}
+
+    def update_chat(self, chat_id: str, body: dict) -> dict:
+        changes: dict = {}
+        if "title" in body:
+            if not isinstance(body["title"], str):
+                raise ApiError(HTTPStatus.BAD_REQUEST, "title must be a string")
+            changes["title"] = body["title"]
+        if "pinned" in body:
+            if not isinstance(body["pinned"], bool):
+                raise ApiError(HTTPStatus.BAD_REQUEST, "pinned must be a boolean")
+            changes["pinned"] = body["pinned"]
+        if "model" in body:
+            model = body["model"] or None  # an empty choice means the harness default model
+            if model is not None and model not in self.models:
+                raise ApiError(HTTPStatus.BAD_REQUEST, f"unknown model {model!r}")
+            changes["model"] = model
+        if "effort" in body:
+            if body["effort"] not in EFFORTS:
+                raise ApiError(HTTPStatus.BAD_REQUEST, f"effort must be one of {', '.join(EFFORTS)}")
+            changes["effort"] = body["effort"]
+        return self.store.update(chat_id, changes)
 
     def send(self, chat_id: str, content: str) -> dict:
         if not content.strip():
             raise ApiError(HTTPStatus.BAD_REQUEST, "message content is empty")
-        self.store.get(chat_id)  # raises 404 for an unknown chat before anything is stored
+        chat = self.store.get(chat_id)  # raises 404 for an unknown chat before anything is stored
         self.store.append(chat_id, "user", content)
+        settings = (chat.get("model"), chat.get("effort", DEFAULT_EFFORT))
         with self._reply_lock:
             try:
-                reply = self._replier(chat_id)(content)
+                reply = self._replier(chat_id, settings)(content)
             except Exception as error:  # a model or tool failure is shown in the chat, not as a server crash
                 return self.store.append(chat_id, "error", f"{type(error).__name__}: {error}")
         return self.store.append(chat_id, "assistant", reply)
 
-    def _replier(self, chat_id: str) -> Replier:
-        if chat_id not in self._repliers:
-            self._repliers[chat_id] = self._replier_factory(chat_id)
-        return self._repliers[chat_id]
+    def _replier(self, chat_id: str, settings: tuple) -> Replier:
+        # Changing the model or effort rebuilds the agent; its session keeps the conversation.
+        cached = self._repliers.get(chat_id)
+        if cached is None or cached[0] != settings:
+            self._repliers[chat_id] = (settings, self._replier_factory(chat_id, *settings))
+        return self._repliers[chat_id][1]
 
 
 def _summary(chat: dict) -> dict:
@@ -188,6 +229,8 @@ def make_handler(service: ChatService) -> type[BaseHTTPRequestHandler]:
                 return self._static("index.html")
             if path.startswith("/static/"):
                 return self._static(path.removeprefix("/static/"))
+            if path == "/api/config":
+                return self._json(200, service.config())
             if path == "/api/chats":
                 return self._json(200, {"chats": service.store.list_chats()})
             chat_id = _chat_id(path)
@@ -208,14 +251,7 @@ def make_handler(service: ChatService) -> type[BaseHTTPRequestHandler]:
             chat_id = _chat_id(path)
             if not chat_id:
                 raise ApiError(404, "not found")
-            body = self._body()
-            title = body.get("title")
-            pinned = body.get("pinned")
-            if title is not None and not isinstance(title, str):
-                raise ApiError(400, "title must be a string")
-            if pinned is not None and not isinstance(pinned, bool):
-                raise ApiError(400, "pinned must be a boolean")
-            self._json(200, service.store.update(chat_id, title, pinned))
+            self._json(200, service.update_chat(chat_id, self._body()))
 
         def _delete(self, path: str) -> None:
             chat_id = _chat_id(path)
@@ -279,11 +315,12 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA_FILE, help="JSON file that stores the chats")
+    parser.add_argument("--model", action="append", default=[], help="a model for the picker, as provider/name")
     parser.add_argument("--demo", action="store_true", help="answer with an echo agent instead of a model")
     args = parser.parse_args()
 
     factory = echo_replier_factory if args.demo else harness_replier_factory
-    service = ChatService(ChatStore(args.data), factory)
+    service = ChatService(ChatStore(args.data), factory, models=args.model)
     server = make_server(args.host, args.port, service)
     print(f"Strands Chat on http://{args.host}:{server.server_port}  (data: {args.data})")
     try:

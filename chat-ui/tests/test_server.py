@@ -10,10 +10,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from server import ChatService, ChatStore, echo_replier_factory, make_server  # noqa: E402
 
+MODELS = ["bedrock/example-model", "openai/example-model"]
+
 
 @pytest.fixture
 def base_url(tmp_path):
-    service = ChatService(ChatStore(tmp_path / "chats.json"), echo_replier_factory)
+    service = ChatService(ChatStore(tmp_path / "chats.json"), echo_replier_factory, models=MODELS)
     server = make_server("127.0.0.1", 0, service)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -37,6 +39,8 @@ def test_chat_lifecycle(base_url):
     status, chat = request(base_url, "POST", "/api/chats")
     assert status == 201
     assert chat["title"] == "New chat"
+    assert chat["model"] is None
+    assert chat["effort"] == "auto"
 
     status, reply = request(base_url, "POST", f"/api/chats/{chat['id']}/messages", {"content": "Hello there\nsecond line"})
     assert status == 200
@@ -56,6 +60,53 @@ def test_chat_lifecycle(base_url):
     assert status == 200
     status, _ = request(base_url, "GET", f"/api/chats/{chat['id']}")
     assert status == 404
+
+
+def test_config_lists_models_and_efforts(base_url):
+    status, config = request(base_url, "GET", "/api/config")
+    assert status == 200
+    assert config["models"] == MODELS
+    assert config["efforts"][0] == "auto"
+    assert "max" in config["efforts"]
+
+
+def test_model_and_effort_are_saved_per_chat(base_url):
+    _, chat = request(base_url, "POST", "/api/chats")
+    status, updated = request(base_url, "PATCH", f"/api/chats/{chat['id']}", {"model": MODELS[1], "effort": "high"})
+    assert status == 200
+    assert (updated["model"], updated["effort"]) == (MODELS[1], "high")
+
+    # An empty model choice goes back to the harness default.
+    _, updated = request(base_url, "PATCH", f"/api/chats/{chat['id']}", {"model": ""})
+    assert updated["model"] is None
+
+
+def test_unknown_model_and_effort_are_rejected(base_url):
+    _, chat = request(base_url, "POST", "/api/chats")
+    status, error = request(base_url, "PATCH", f"/api/chats/{chat['id']}", {"model": "nowhere/none"})
+    assert status == 400
+    assert "unknown model" in error["error"]
+
+    status, error = request(base_url, "PATCH", f"/api/chats/{chat['id']}", {"effort": "ludicrous"})
+    assert status == 400
+    assert "effort must be one of" in error["error"]
+
+
+def test_settings_reach_the_agent_and_a_change_rebuilds_it(tmp_path):
+    built = []
+
+    def recording(chat_id, model, effort):
+        built.append((model, effort))
+        return lambda prompt: f"{model}/{effort}"
+
+    service = ChatService(ChatStore(tmp_path / "chats.json"), recording, models=MODELS)
+    chat = service.store.create()
+    assert service.send(chat["id"], "one")["content"] == "None/auto"
+    assert service.send(chat["id"], "two")["content"] == "None/auto"  # same settings reuse the agent
+
+    service.update_chat(chat["id"], {"model": MODELS[0], "effort": "low"})
+    assert service.send(chat["id"], "three")["content"] == f"{MODELS[0]}/low"
+    assert built == [(None, "auto"), (MODELS[0], "low")]
 
 
 def test_unknown_chat_and_empty_message_are_rejected(base_url):
@@ -81,13 +132,13 @@ def test_malformed_bodies_are_rejected(base_url):
 
 
 def test_a_failing_replier_is_shown_as_an_error_message(tmp_path):
-    def broken(chat_id):
+    def broken(chat_id, model, effort):
         def reply(prompt):
             raise RuntimeError("model unavailable")
 
         return reply
 
-    service = ChatService(ChatStore(tmp_path / "chats.json"), broken)
+    service = ChatService(ChatStore(tmp_path / "chats.json"), broken, models=[])
     chat = service.store.create()
     message = service.send(chat["id"], "hi")
     assert message["role"] == "error"
@@ -97,7 +148,7 @@ def test_a_failing_replier_is_shown_as_an_error_message(tmp_path):
 
 def test_chats_survive_a_restart(tmp_path):
     path = tmp_path / "chats.json"
-    chat = ChatService(ChatStore(path), echo_replier_factory)
+    chat = ChatService(ChatStore(path), echo_replier_factory, models=[])
     created = chat.store.create()
     chat.send(created["id"], "remember me")
 
