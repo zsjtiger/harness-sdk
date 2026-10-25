@@ -226,6 +226,8 @@ def make_handler(service: ChatService) -> type[BaseHTTPRequestHandler]:
 
         def _get(self, path: str) -> None:
             if path == "/":
+                if not (STATIC_DIR / "index.html").is_file():
+                    raise ApiError(503, "the frontend is not built: run `npm install && npm run build` in chat-ui/web")
                 return self._static("index.html")
             if path.startswith("/static/"):
                 return self._static(path.removeprefix("/static/"))

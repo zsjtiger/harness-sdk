@@ -1,0 +1,4 @@
+# Built frontend (npm run build in web/); regenerated, so not tracked
+static/index.html
+static/assets/
+web/node_modules/

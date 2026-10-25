@@ -163,3 +163,20 @@ def test_static_files_are_served_and_stay_inside_the_static_directory(base_url):
 
     status, _ = request(base_url, "GET", "/static/%2e%2e/server.py")
     assert status == 404
+
+
+def test_root_explains_a_missing_frontend_build(tmp_path, monkeypatch):
+    import server
+
+    monkeypatch.setattr(server, "STATIC_DIR", tmp_path)  # an empty directory: nothing built yet
+    service = ChatService(ChatStore(tmp_path / "chats.json"), echo_replier_factory, models=[])
+    httpd = make_server("127.0.0.1", 0, service)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, error = request(f"127.0.0.1:{httpd.server_port}", "GET", "/")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert status == 503
+    assert "npm run build" in error["error"]
