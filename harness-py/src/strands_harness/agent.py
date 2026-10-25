@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 from strands import Agent, BackgroundTasksConfig
@@ -76,33 +76,38 @@ _ALWAYS_BACKGROUND_TOOL_NAMES = frozenset({"subagent"})
 _UNSET: Any = object()
 
 
-def _builtin_tools(parent_config: dict[str, Any]) -> dict[str, Any]:
-    """The built-in tools by name. Each configurable one is built from its factory with the config it
-    was enabled with (``{}`` for ``True``, see ``_BUILTIN_TOOL_CONFIG_KEYS``); ``web_fetch`` also
-    derives its summarizer from the agent's model, ``subagent`` takes the whole parent config so it
-    can rebuild a child the way this agent was built. ``subagent``'s own delegation-depth budget
-    lives on ``agent.state``, tracked by the tool itself. ``web_search`` here is the Exa tool;
-    ``create_harness`` selects it only when the setting is ``"exa"``."""
-    enabled = parent_config["builtin_tools"]
-    web_fetch_config = _builtin_tool_config(enabled, "web_fetch")
-    web_fetch_model = resolve_web_fetch_model(parent_config["model"], web_fetch_config.pop("model", None))
-    tools = (
-        make_shell(**_builtin_tool_config(enabled, "shell")),
-        make_read(**{"media": _supports_media(parent_config["model"]), **_builtin_tool_config(enabled, "read")}),
-        write,
-        edit,
-        make_web_fetch(model=web_fetch_model, **web_fetch_config),
-        exa_web_search,
-        make_programmatic_tool_caller(**_builtin_tool_config(enabled, "programmatic_tool_caller")),
-        build_default_subagent(create_harness, parent_config, **_builtin_tool_config(enabled, "subagent")),
-    )
-    return {t.tool_name: t for t in tools}
+def _web_fetch(parent_config: dict[str, Any], enabled: Mapping[str, Any]) -> Any:
+    config = _builtin_tool_config(enabled, "web_fetch")
+    model = resolve_web_fetch_model(parent_config["model"], config.pop("model", None))
+    return make_web_fetch(model=model, **config)
 
 
-def _select_builtin_tools(enabled: Mapping[str, Any], tools: dict[str, Any]) -> list[Any]:
-    # A config mapping enables the tool even when empty (``{"web_fetch": {}}`` is "on with
-    # defaults"), so only ``False`` means off.
-    return [tools[name] for name, setting in enabled.items() if setting is not False]
+def _builtin_tools(parent_config: dict[str, Any], enabled: Mapping[str, Any]) -> list[Any]:
+    """The tools for the ``enabled`` built-ins, in ``enabled`` order. Each is built from its factory with the config
+    it was enabled with (``{}`` for ``True``, see ``_BUILTIN_TOOL_CONFIG_KEYS``); a disabled tool is never built, so
+    its model or config is never resolved. ``web_fetch`` also derives its summarizer from the agent's model,
+    ``subagent`` takes the whole parent config so it can rebuild a child the way this agent was built.
+    ``subagent``'s own delegation-depth budget lives on ``agent.state``, tracked by the tool itself. ``web_search``
+    here is the Exa tool; ``create_harness`` enables it only when the setting is ``"exa"``."""
+    builders: dict[str, Callable[[], Any]] = {
+        "shell": lambda: make_shell(**_builtin_tool_config(enabled, "shell")),
+        "read": lambda: make_read(
+            **{"media": _supports_media(parent_config["model"]), **_builtin_tool_config(enabled, "read")}
+        ),
+        "write": lambda: write,
+        "edit": lambda: edit,
+        "web_fetch": lambda: _web_fetch(parent_config, enabled),
+        "web_search": lambda: exa_web_search,
+        "programmatic_tool_caller": lambda: make_programmatic_tool_caller(
+            **_builtin_tool_config(enabled, "programmatic_tool_caller")
+        ),
+        "subagent": lambda: build_default_subagent(
+            create_harness, parent_config, **_builtin_tool_config(enabled, "subagent")
+        ),
+    }
+    # A config mapping enables the tool even when empty (``{"web_fetch": {}}`` is "on with defaults"), so only
+    # ``False`` means off.
+    return [builders[name]() for name, setting in enabled.items() if setting is not False]
 
 
 def _web_search_mode(
@@ -456,7 +461,7 @@ def create_harness(
         "sandbox": agent_kwargs.get("sandbox"),
     }
 
-    builtin = _select_builtin_tools({**enabled_tools, "web_search": web_search == "exa"}, _builtin_tools(parent_config))
+    builtin = _builtin_tools(parent_config, {**enabled_tools, "web_search": web_search == "exa"})
     context_enabled = context_manager is not None and context_manager is not False
     # The SDK's Agent rejects a bare config dict; build the instance from it here.
     if isinstance(context_manager, Mapping):

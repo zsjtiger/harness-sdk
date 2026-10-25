@@ -253,6 +253,18 @@ def test_builtin_tools_disabled():
     assert "sample_tool" in agent.tool_names
 
 
+def test_disabled_builtin_tools_are_never_built(monkeypatch):
+    # A disabled built-in is not built, so the model its factory would resolve is never touched.
+    def fail(*_args, **_kwargs):
+        raise AssertionError("a disabled built-in was built")
+
+    monkeypatch.setattr("strands_harness.agent.resolve_web_fetch_model", fail)
+    monkeypatch.setattr("strands_harness.agent.build_default_subagent", fail)
+    agent = create_harness(builtin_tools=["read"])
+    assert "read" in agent.tool_names
+    assert "web_fetch" not in agent.tool_names
+
+
 class _BashSandbox(DockerSandbox):
     def get_tools(self):
         return [

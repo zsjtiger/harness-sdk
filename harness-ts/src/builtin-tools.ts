@@ -146,44 +146,48 @@ export function webSearchMode(
 export type BuildAgent = (options: HarnessAgentOptions) => Promise<Agent>
 
 // `web_fetch` needs the agent's model to pick its default summarizer, and `subagent` the whole
-// parent config to rebuild a child. `web_search` here is the Exa tool; `createHarness` selects
+// parent config to rebuild a child. `web_search` here is the Exa tool; `createHarness` enables
 // it only when the setting is `'exa'`.
+/**
+ * The tools for `names`, in order. Each is built from its factory only when named, so a disabled
+ * built-in never resolves its model or config.
+ */
 export async function buildBuiltinTools(
   buildAgent: BuildAgent,
   parentConfig: HarnessAgentOptions,
-  builtins: ResolvedBuiltinTools
-): Promise<Record<BuiltinToolName, Tool>> {
+  builtins: ResolvedBuiltinTools,
+  names: readonly BuiltinToolName[]
+): Promise<ToolList> {
   const webFetch = builtinToolConfig(builtins, 'web_fetch')
   const caller = builtinToolConfig(builtins, 'programmatic_tool_caller') ?? {}
   const subagent = builtinToolConfig(builtins, 'subagent') ?? {}
-  return {
+  const builders: Record<BuiltinToolName, () => Promise<Tool>> = {
     // Stateless, sandbox-routed shell: each call runs fresh, so its schema is just `command`/`timeout`
     // with no `mode` discriminator for the model to omit.
-    shell: makeShell(builtinToolConfig(builtins, 'shell') ?? {}),
-    read: makeRead({
-      media: builtinToolConfig(builtins, 'read')?.media ?? (await supportsMedia(parentConfig.model)),
-    }),
-    write,
-    edit,
-    web_fetch: makeWebFetch({
-      model: await resolveWebFetchModel(parentConfig.model, webFetch?.model),
-      transport: webFetch?.transport,
-    }),
-    web_search: exaWebSearch,
+    shell: async () => makeShell(builtinToolConfig(builtins, 'shell') ?? {}),
+    read: async () =>
+      makeRead({
+        media: builtinToolConfig(builtins, 'read')?.media ?? (await supportsMedia(parentConfig.model)),
+      }),
+    write: async () => write,
+    edit: async () => edit,
+    web_fetch: async () =>
+      makeWebFetch({
+        model: await resolveWebFetchModel(parentConfig.model, webFetch?.model),
+        transport: webFetch?.transport,
+      }),
+    web_search: async () => exaWebSearch,
     // The portable config spells the bound in seconds (`timeout`); the factory takes `timeoutMs`.
-    programmatic_tool_caller: makeProgrammaticToolCaller({
-      ...(caller.allowedTools === undefined || caller.allowedTools === null
-        ? {}
-        : { allowedTools: caller.allowedTools }),
-      ...(caller.timeout === undefined ? {} : { timeoutMs: caller.timeout === null ? null : caller.timeout * 1000 }),
-    }),
-    subagent: buildDefaultSubagent(buildAgent, parentConfig, subagent),
+    programmatic_tool_caller: async () =>
+      makeProgrammaticToolCaller({
+        ...(caller.allowedTools === undefined || caller.allowedTools === null
+          ? {}
+          : { allowedTools: caller.allowedTools }),
+        ...(caller.timeout === undefined ? {} : { timeoutMs: caller.timeout === null ? null : caller.timeout * 1000 }),
+      }),
+    subagent: async () => buildDefaultSubagent(buildAgent, parentConfig, subagent),
   }
-}
-
-/** The tool objects for `names`. */
-export function selectBuiltinTools(names: readonly BuiltinToolName[], tools: Record<BuiltinToolName, Tool>): ToolList {
-  return names.map((name) => tools[name])
+  return Promise.all(names.map((name) => builders[name]()))
 }
 
 // The SDK never leaves `clientName` empty: an `McpClient` built without `applicationName` reports this.

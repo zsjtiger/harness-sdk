@@ -29,7 +29,6 @@ import {
   builtinToolConfig,
   enabledBuiltinTools,
   resolveBuiltinTools,
-  selectBuiltinTools,
   webSearchExplicit,
   webSearchMode,
   type ResolvedBuiltinTools,
@@ -425,9 +424,11 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
     ...(agentConfig.sandbox !== undefined && { sandbox: agentConfig.sandbox }),
   }
 
-  const builtin = selectBuiltinTools(
-    enabledBuiltinTools({ ...resolvedBuiltins, web_search: webSearch === 'exa' }),
-    await buildBuiltinTools(createHarness, parentConfig, resolvedBuiltins)
+  const builtin = await buildBuiltinTools(
+    createHarness,
+    parentConfig,
+    resolvedBuiltins,
+    enabledBuiltinTools({ ...resolvedBuiltins, web_search: webSearch === 'exa' })
   )
 
   // Assemble plugins before the collision check so plugin-vended tools are checked too; consumer

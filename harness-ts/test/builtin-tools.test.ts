@@ -1,8 +1,39 @@
 import { describe, expect, it } from 'vitest'
 
-import { builtinToolConfig, enabledBuiltinTools, resolveBuiltinTools, webSearchExplicit } from '../src/builtin-tools.js'
+import { Tool } from '@strands-agents/sdk'
+
+import {
+  buildBuiltinTools,
+  builtinToolConfig,
+  enabledBuiltinTools,
+  resolveBuiltinTools,
+  webSearchExplicit,
+} from '../src/builtin-tools.js'
 import { BUILTIN_TOOL_CONFIG_KEYS, BUILTIN_TOOL_NAMES, normalizeHarnessAgentConfig } from '../src/config.js'
 import { DEFAULT_BUILTIN_TOOLS } from '../src/defaults.js'
+
+describe('buildBuiltinTools', () => {
+  // Any call here means a disabled built-in was built.
+  const unusedBuildAgent = async (): Promise<never> => {
+    throw new Error('a disabled built-in was built')
+  }
+
+  it('builds only the named tools, in the order named', async () => {
+    const tools = await buildBuiltinTools(unusedBuildAgent, {}, resolveBuiltinTools(undefined), ['write', 'shell'])
+    expect(tools.map((tool) => (tool as Tool).name)).toEqual(['write', 'shell'])
+  })
+
+  it('does not resolve the model of a disabled built-in', async () => {
+    // An unknown provider on the main model makes resolving a summarizer from it throw.
+    const tools = await buildBuiltinTools(
+      unusedBuildAgent,
+      { model: 'unknown-provider/model' },
+      resolveBuiltinTools(['shell']),
+      ['shell']
+    )
+    expect(tools.map((tool) => (tool as Tool).name)).toEqual(['shell'])
+  })
+})
 
 describe('resolveBuiltinTools', () => {
   it('selects the defaults when undefined', () => {
