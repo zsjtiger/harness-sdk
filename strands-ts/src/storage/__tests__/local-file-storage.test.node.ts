@@ -55,7 +55,9 @@ describe('LocalFileStorage', () => {
       await expect(stat(join(baseDir, 'atomic/test.tmp'))).rejects.toThrow()
     })
 
-    it.skipIf(process.platform === 'win32')('cleans up tmp file on rename failure', async () => {
+    // A read-only directory only blocks writes for non-root users, so root cannot exercise this failure.
+    const isRoot = process.getuid?.() === 0
+    it.skipIf(process.platform === 'win32' || isRoot)('cleans up tmp file on rename failure', async () => {
       const { mkdir, chmod, readdir } = await import('node:fs/promises')
       const dir = join(baseDir, 'readonly')
       await mkdir(dir, { recursive: true })
