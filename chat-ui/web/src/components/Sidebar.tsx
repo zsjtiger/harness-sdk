@@ -8,6 +8,7 @@ interface SidebarProps {
   query: string;
   collapsed: Record<string, boolean>;
   searchRef: RefObject<HTMLInputElement | null>;
+  userName: string;
   onClose(): void;
   onNew(): void;
   onSearch(): void;
@@ -79,6 +80,13 @@ export function Sidebar(props: SidebarProps) {
             </div>
           </div>
         ))}
+      </div>
+      <div className="user-footer">
+        <span className="avatar" aria-hidden="true">{props.userName.trim().charAt(0).toUpperCase() || "?"}</span>
+        <span className="user-info">
+          <span className="user-name">{props.userName || "Local user"}</span>
+          <span className="user-plan">Local server</span>
+        </span>
       </div>
     </aside>
   );

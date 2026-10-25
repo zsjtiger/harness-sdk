@@ -67,6 +67,7 @@ def test_config_lists_models_and_efforts(base_url):
     assert status == 200
     assert config["models"] == MODELS
     assert config["efforts"][0] == "auto"
+    assert config["user"] == {"name": "Local user"}
     assert "max" in config["efforts"]
 
 

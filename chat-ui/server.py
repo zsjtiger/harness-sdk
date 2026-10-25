@@ -30,6 +30,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 DEFAULT_DATA_FILE = Path(".agent/chat-ui/chats.json")
 DEFAULT_TITLE = "New chat"
 DEFAULT_EFFORT = "auto"
+DEFAULT_USER_NAME = "Local user"
 EFFORTS = get_args(Effort)
 MAX_BODY_BYTES = 1_000_000
 MAX_TITLE_CHARS = 60
@@ -140,15 +141,23 @@ class ChatStore:
 class ChatService:
     """Chat operations plus the replies. Replies run one at a time: harness agents are not thread-safe."""
 
-    def __init__(self, store: ChatStore, replier_factory: ReplierFactory, models: list[str]) -> None:
+    def __init__(
+        self, store: ChatStore, replier_factory: ReplierFactory, models: list[str], user_name: str = DEFAULT_USER_NAME
+    ) -> None:
         self.store = store
         self.models = models
+        self.user_name = user_name
         self._replier_factory = replier_factory
         self._repliers: dict[str, tuple[tuple, Replier]] = {}
         self._reply_lock = threading.Lock()
 
     def config(self) -> dict:
-        return {"models": self.models, "efforts": list(EFFORTS), "default_effort": DEFAULT_EFFORT}
+        return {
+            "models": self.models,
+            "efforts": list(EFFORTS),
+            "default_effort": DEFAULT_EFFORT,
+            "user": {"name": self.user_name},
+        }
 
     def update_chat(self, chat_id: str, body: dict) -> dict:
         changes: dict = {}
@@ -319,10 +328,11 @@ def main() -> None:
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA_FILE, help="JSON file that stores the chats")
     parser.add_argument("--model", action="append", default=[], help="a model for the picker, as provider/name")
     parser.add_argument("--demo", action="store_true", help="answer with an echo agent instead of a model")
+    parser.add_argument("--user-name", default=DEFAULT_USER_NAME, help="the name shown at the bottom of the sidebar")
     args = parser.parse_args()
 
     factory = echo_replier_factory if args.demo else harness_replier_factory
-    service = ChatService(ChatStore(args.data), factory, models=args.model)
+    service = ChatService(ChatStore(args.data), factory, models=args.model, user_name=args.user_name)
     server = make_server(args.host, args.port, service)
     print(f"Strands Chat on http://{args.host}:{server.server_port}  (data: {args.data})")
     try:

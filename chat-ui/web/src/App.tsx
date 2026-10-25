@@ -11,7 +11,7 @@ export interface Settings {
 }
 
 const DEFAULT_TITLE = "New chat";
-const EMPTY_CONFIG: Config = { models: [], efforts: [], default_effort: "auto" };
+const EMPTY_CONFIG: Config = { models: [], efforts: [], default_effort: "auto", user: { name: "" } };
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -174,6 +174,7 @@ export function App() {
         query={query}
         collapsed={collapsed}
         searchRef={searchRef}
+        userName={config.user.name}
         onClose={() => setSidebarOpen(false)}
         onNew={() => void runCommand("new")}
         onSearch={() => void runCommand("search")}

@@ -147,6 +147,46 @@ textarea {
   overflow-y: auto;
 }
 
+.user-footer {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 10px;
+  margin-top: auto;
+  padding: 12px 6px 2px;
+}
+
+.avatar {
+  align-items: center;
+  background: var(--accent);
+  border-radius: 50%;
+  color: #fff;
+  display: inline-flex;
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-plan {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .section-toggle {
   align-items: center;
   background: none;

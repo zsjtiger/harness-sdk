@@ -24,6 +24,7 @@ export interface Config {
   models: string[];
   efforts: string[];
   default_effort: string;
+  user: { name: string };
 }
 
 export interface ChatChanges {
